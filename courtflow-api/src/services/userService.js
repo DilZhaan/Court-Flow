@@ -93,7 +93,7 @@ const updateUserRole = async ({ id, role }, actor) => {
     action: "USER_ROLE_UPDATED",
     entityType: "User",
     entityId: user._id,
-    metadata: { previousRole, role },
+    metadata: { email: user.email, previousRole, role },
   });
 
   return user;
@@ -115,7 +115,7 @@ const updateUserStatus = async ({ id, isActive }, actor) => {
     action: "USER_STATUS_UPDATED",
     entityType: "User",
     entityId: user._id,
-    metadata: { previousStatus, isActive },
+    metadata: { email: user.email, previousStatus, isActive },
   });
 
   return user;

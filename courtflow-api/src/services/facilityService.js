@@ -100,7 +100,7 @@ const updateFacility = async (id, payload, actor) => {
     action: "FACILITY_UPDATED",
     entityType: "Facility",
     entityId: facility._id,
-    metadata: payload,
+    metadata: { code: facility.code, name: facility.name, changes: payload },
   });
 
   return facility;

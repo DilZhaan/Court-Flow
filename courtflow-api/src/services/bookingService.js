@@ -97,6 +97,7 @@ const createBooking = async (payload, actor) => {
     entityId: createdBooking._id,
     metadata: {
       facility: payload.facility,
+      clientName: payload.clientName,
       startAt: payload.startAt,
       endAt: payload.endAt,
     },
@@ -172,7 +173,7 @@ const cancelBooking = async ({ id, cancellationReason }, actor) => {
     action: "BOOKING_CANCELLED",
     entityType: "Booking",
     entityId: booking._id,
-    metadata: { cancellationReason },
+    metadata: { clientName: booking.clientName, cancellationReason },
   });
 
   return getBookingById(booking._id);
