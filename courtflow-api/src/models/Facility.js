@@ -50,6 +50,10 @@ const facilitySchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    bookingRevision: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true }
 );
