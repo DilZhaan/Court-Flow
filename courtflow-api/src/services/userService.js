@@ -72,6 +72,18 @@ const updateUserRole = async ({ id, role }, actor) => {
     throw new ApiError(404, "User not found");
   }
 
+  if (user._id.equals(actor._id)) {
+    throw new ApiError(403, "You cannot change your own role");
+  }
+
+  if (actor.role === ROLES.MANAGER && user.role === ROLES.ADMIN) {
+    throw new ApiError(403, "Managers cannot change admin roles");
+  }
+
+  if (actor.role === ROLES.MANAGER && role === ROLES.ADMIN) {
+    throw new ApiError(403, "Managers cannot assign admin role");
+  }
+
   const previousRole = user.role;
   user.role = role;
   await user.save();
