@@ -35,6 +35,13 @@ const findBookedFacilityIds = async ({ startAt, endAt }) => {
   return bookings.map((booking) => booking.facility);
 };
 
+const findBookedFacilityIdsAt = async (date) =>
+  Booking.find({
+    status: BOOKING_STATUS.ACTIVE,
+    startAt: { $lt: date },
+    endAt: { $gt: date },
+  }).distinct("facility");
+
 const createFacility = async (payload, actor) => {
   const exists = await Facility.exists({ code: payload.code.toUpperCase() });
 
@@ -64,7 +71,17 @@ const listFacilities = async (filters = {}) => {
     query.status = FACILITY_STATUS.AVAILABLE;
   }
 
-  return Facility.find(query).sort({ location: 1, name: 1 });
+  const facilities = await Facility.find(query)
+    .sort({ location: 1, name: 1 })
+    .lean();
+
+  const bookedNowIds = await findBookedFacilityIdsAt(new Date());
+  const bookedNowSet = new Set(bookedNowIds.map((id) => id.toString()));
+
+  return facilities.map((facility) => ({
+    ...facility,
+    isBooked: bookedNowSet.has(facility._id.toString()),
+  }));
 };
 
 const getFacilityById = async (id) => {

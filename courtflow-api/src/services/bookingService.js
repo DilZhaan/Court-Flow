@@ -5,6 +5,7 @@ import { FACILITY_STATUS } from "../constants/facilityStatus.js";
 import Booking from "../models/Booking.js";
 import Facility from "../models/Facility.js";
 import ApiError from "../utils/ApiError.js";
+import { ROLES } from "../constants/roles.js";
 import { recordAuditLog } from "./auditService.js";
 
 const maxTransactionRetries = 3;
@@ -14,8 +15,17 @@ const isTransientTransactionError = (error) =>
   (error.hasErrorLabel("TransientTransactionError") ||
     error.hasErrorLabel("UnknownTransactionCommitResult"));
 
+const isTransactionNotSupported = (error) =>
+  typeof error?.message === "string" &&
+  /Transaction numbers are only allowed on a replica set member or mongos|Transactions are not supported/i.test(
+    error.message,
+  );
+
+const withSession = (query, session) =>
+  session ? query.session(session) : query;
+
 const assertFacilityIsBookable = async (facilityId, session = null) => {
-  const facility = await Facility.findById(facilityId).session(session);
+  const facility = await withSession(Facility.findById(facilityId), session);
 
   if (!facility) {
     throw new ApiError(404, "Facility not found");
@@ -28,13 +38,52 @@ const assertFacilityIsBookable = async (facilityId, session = null) => {
   return facility;
 };
 
-const findOverlappingBooking = async ({ facility, startAt, endAt }, session = null) =>
-  Booking.findOne({
-    facility,
-    status: BOOKING_STATUS.ACTIVE,
-    startAt: { $lt: endAt },
-    endAt: { $gt: startAt },
-  }).session(session);
+const findOverlappingBooking = async (
+  { facility, startAt, endAt },
+  session = null,
+) =>
+  withSession(
+    Booking.findOne({
+      facility,
+      status: BOOKING_STATUS.ACTIVE,
+      startAt: { $lt: endAt },
+      endAt: { $gt: startAt },
+    }),
+    session,
+  );
+
+const runBookingFlow = async (payload, actor, session = null) => {
+  const facility = await assertFacilityIsBookable(payload.facility, session);
+
+  const updateOptions = session ? { session } : undefined;
+  await Facility.updateOne(
+    { _id: facility._id },
+    { $inc: { bookingRevision: 1 } },
+    updateOptions,
+  );
+
+  const overlap = await findOverlappingBooking(payload, session);
+
+  if (overlap) {
+    throw new ApiError(
+      409,
+      "Facility already has an active booking for this time slot",
+    );
+  }
+
+  const createOptions = session ? { session } : undefined;
+  const [booking] = await Booking.create(
+    [
+      {
+        ...payload,
+        bookedBy: actor._id,
+      },
+    ],
+    createOptions,
+  );
+
+  return booking;
+};
 
 const runBookingTransaction = async (payload, actor) => {
   const session = await mongoose.startSession();
@@ -43,31 +92,7 @@ const runBookingTransaction = async (payload, actor) => {
     let createdBooking;
 
     await session.withTransaction(async () => {
-      const facility = await assertFacilityIsBookable(payload.facility, session);
-
-      await Facility.updateOne(
-        { _id: facility._id },
-        { $inc: { bookingRevision: 1 } },
-        { session }
-      );
-
-      const overlap = await findOverlappingBooking(payload, session);
-
-      if (overlap) {
-        throw new ApiError(409, "Facility already has an active booking for this time slot");
-      }
-
-      const [booking] = await Booking.create(
-        [
-          {
-            ...payload,
-            bookedBy: actor._id,
-          },
-        ],
-        { session }
-      );
-
-      createdBooking = booking;
+      createdBooking = await runBookingFlow(payload, actor, session);
     });
 
     return createdBooking;
@@ -84,7 +109,14 @@ const createBooking = async (payload, actor) => {
       createdBooking = await runBookingTransaction(payload, actor);
       break;
     } catch (error) {
-      if (!isTransientTransactionError(error) || attempt === maxTransactionRetries) {
+      if (isTransactionNotSupported(error)) {
+        createdBooking = await runBookingFlow(payload, actor);
+        break;
+      }
+      if (
+        !isTransientTransactionError(error) ||
+        attempt === maxTransactionRetries
+      ) {
         throw error;
       }
     }
@@ -108,8 +140,12 @@ const createBooking = async (payload, actor) => {
     .populate("bookedBy", "email displayName role");
 };
 
-const listBookings = async (filters = {}) => {
+const listBookings = async (filters = {}, actor) => {
   const query = {};
+
+  if (actor?.role === ROLES.STAFF) {
+    query.bookedBy = actor._id;
+  }
 
   if (filters.facility) {
     query.facility = filters.facility;
@@ -138,7 +174,7 @@ const listBookings = async (filters = {}) => {
     .sort({ startAt: -1 });
 };
 
-const getBookingById = async (id) => {
+const getBookingById = async (id, actor) => {
   const booking = await Booking.findById(id)
     .populate("facility", "code name location sportType")
     .populate("bookedBy", "email displayName role")
@@ -146,6 +182,13 @@ const getBookingById = async (id) => {
 
   if (!booking) {
     throw new ApiError(404, "Booking not found");
+  }
+
+  if (
+    actor?.role === ROLES.STAFF &&
+    !booking.bookedBy?._id?.equals(actor._id)
+  ) {
+    throw new ApiError(403, "You do not have permission to view this booking");
   }
 
   return booking;
@@ -156,6 +199,13 @@ const cancelBooking = async ({ id, cancellationReason }, actor) => {
 
   if (!booking) {
     throw new ApiError(404, "Booking not found");
+  }
+
+  if (actor?.role === ROLES.STAFF && !booking.bookedBy?.equals(actor._id)) {
+    throw new ApiError(
+      403,
+      "You do not have permission to cancel this booking",
+    );
   }
 
   if (booking.status === BOOKING_STATUS.CANCELLED) {
@@ -176,7 +226,7 @@ const cancelBooking = async ({ id, cancellationReason }, actor) => {
     metadata: { clientName: booking.clientName, cancellationReason },
   });
 
-  return getBookingById(booking._id);
+  return getBookingById(booking._id, actor);
 };
 
 export { cancelBooking, createBooking, getBookingById, listBookings };

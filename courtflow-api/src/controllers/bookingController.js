@@ -14,14 +14,14 @@ import asyncHandler from "../utils/asyncHandler.js";
 
 const getBookings = asyncHandler(async (req, res) => {
   const filters = bookingQueryDto(req.query);
-  const bookings = await listBookings(filters);
+  const bookings = await listBookings(filters, req.user);
 
   res.success(bookings, "Bookings fetched");
 });
 
 const getBooking = asyncHandler(async (req, res) => {
   const { id } = bookingIdDto(req.params);
-  const booking = await getBookingById(id);
+  const booking = await getBookingById(id, req.user);
 
   res.success(booking, "Booking fetched");
 });
