@@ -50,17 +50,6 @@ jobs:
             VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}
             VITE_FIREBASE_MEASUREMENT_ID=${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
 
-      - name: Upload project to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_SSH_PORT }}
-          source: "docker-compose.prod.yml"
-          target: ${{ secrets.EC2_APP_DIR }}
-          rm: true
-
       - name: Deploy with Docker Compose
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -70,7 +59,35 @@ jobs:
           port: ${{ secrets.EC2_SSH_PORT }}
           script: |
             set -e
+            mkdir -p "${{ secrets.EC2_APP_DIR }}"
             cd "${{ secrets.EC2_APP_DIR }}"
+
+            cat > docker-compose.prod.yml << 'EOF'
+            services:
+              web:
+                image: ghcr.io/dilzhaan/court-flow-web:latest
+                container_name: courtflow-web
+                ports:
+                  - "5173:80"
+                depends_on:
+                  - api
+                restart: unless-stopped
+
+              api:
+                image: ghcr.io/dilzhaan/court-flow-api:latest
+                container_name: courtflow-api
+                ports:
+                  - "127.0.0.1:3000:3000"
+                environment:
+                  PORT: 3000
+                  MONGODB_URI: ${MONGODB_URI}
+                  LOG_LEVEL: info
+                  INITIAL_ADMIN_EMAILS: admin@example.com
+                  FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+                  FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+                  FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+                restart: unless-stopped
+            EOF
 
             cat > .env << 'EOF'
             MONGODB_URI=${{ secrets.MONGODB_URI }}
@@ -81,5 +98,5 @@ jobs:
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
 
-            docker compose -f docker-compose.prod.yml pull || true
-            docker compose -f docker-compose.prod.yml up -d --build
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
