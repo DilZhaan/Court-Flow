@@ -10,5 +10,9 @@ import userRoutes from "./userRoutes.js";
 const router = Router();
 
 router.use("/health", healthRoutes);
+router.use("/users", authenticate, userRoutes);
+router.use("/facilities", authenticate, facilityRoutes);
+router.use("/bookings", authenticate, bookingRoutes);
+router.use("/audit-logs", authenticate, auditRoutes);
 
 export default router;
